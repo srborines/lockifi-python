@@ -1,25 +1,57 @@
-#Imports
-import logging
-import latch
-import os
-import datetime
-import time
-import select
-import sys
-import os
-
-from texttable import Texttable
-
-import lockifi_modules.users_csv
-import lockifi_modules.routers_csv
-import lockifi_modules.configuration_module
-
 #Global variables
 conf_file = ""
 log_file = ""
 config_data={'appid':"",'seckey':"",'users_file':"",'routers_file':'','default_router':{'name':"",'file':""},'listening_mode':""}
-users = []
+users =  "caca"
 routers = []
+current_status_router = ""
+
+#Imports
+try:
+	import logging
+	import latch
+	import os
+	import datetime
+	import time
+	import select
+	import sys
+	import os
+
+	from time import sleep
+	from texttable import Texttable
+	from threading import Timer
+
+	import lockifi_modules.users_csv
+	import lockifi_modules.routers_csv
+	import lockifi_modules.configuration_module
+	
+except ImportError:
+	print "Import error"
+
+class RepeatedTimer(object):
+	def __init__(self, interval, function, *args, **kwargs):
+		self._timer     = None
+		self.interval   = interval
+		self.function   = function
+		self.args       = args
+		self.kwargs     = kwargs
+		self.is_running = False
+		self.start()
+
+	def _run(self):
+		self.is_running = False
+		self.start()
+		self.function(*self.args, **self.kwargs)
+
+	def start(self):
+		if not self.is_running:
+			self._timer = Timer(self.interval, self._run)
+			self._timer.start()
+			self.is_running = True
+
+	def stop(self):
+		self._timer.cancel()
+		self.is_running = False
 
 #Operative system imports
 if os.name == 'nt':	# Windows
@@ -29,24 +61,19 @@ if os.name == 'nt':	# Windows
     path_scripts = "routers_scripts\\"
     log_file = "log\\lockifi.log"
 else:	# Posix (Linux, OS X)
-	try:
-		import getch
-		from select import select	
-	except ImportError:
-		pass
-	else:
-		conf_file = "conf/conf.cfg"
-		path_data = "data/"
-		path_scripts = "routers_scripts/"
-		log_file = "log/lockifi.log"
+	conf_file = "conf/conf.cfg"
+	path_data = "data/"
+	path_scripts = "routers_scripts/"
+	log_file = "log/lockifi.log"
 
-print log_file
+
 #Main functions
 def pre_main():
 	global users
 	global routers
-	global config_data
-
+	global log_file
+	global conf_file
+	
 	logging.basicConfig(format='%(asctime)s %(message)s',filename=log_file,level=logging.DEBUG)
 	config_data = lockifi_modules.configuration_module.import_configuration(conf_file)
 	if config_data==-1:
@@ -60,10 +87,15 @@ def pre_main():
 	if routers==-1:
 		print "\n-->An error has occurred with routers file\n"
 		return 1
-	
-	users_refresh_status()
-	
-	return 0
+	try:
+		if len(users)>0:
+			users_refresh_status();
+		len(routers)
+	except TypeError:
+		print "-->Problem with router or user file."
+		return 1
+	else:
+		return 0
 def main():
 
 	while True:
@@ -92,18 +124,6 @@ def validate_input(number,min_limit,min_include,max_limit,max_include):
 	except ValueError:
 		return "\nInput format failure: Invalid format\n"
 	return 0	
-def detect_esc_press():
-	ret = False
-	if os.name == 'nt':
-		x = msvcrt.kbhit()
-		if x: ret = ord(msvcrt.getch())==27
-	else:
-		dr,dw,de = select([sys.stdin], [], [], 0)
-		x = dr <> []
-		if x: 
-			ret = ord(getch.getch())==27
-			raw_input()
-	return ret
 def clear():
 # Windows
 	if os.name == 'nt':
@@ -661,6 +681,8 @@ def lockifi_conf_edit():
 				
 #Listen functions	
 def lockifi_listen_start():
+	global current_status_router
+
 	if len(users)>0 and len(routers)>0:
 		listening=1
 		print "Lockifi beta - Plugin Latch \n"
@@ -674,29 +696,38 @@ def lockifi_listen_start():
 			wait()
 			return 1
 		status = {1:"on",2:"off"}
-		current_state_router=-1
-		while current_state_router==-1:
+
+		while current_status_router=="":
 			new_mode = raw_input("Enter the current status of wifi [1:on/2:off](press 0 to cancel listen): ")
 			if validate_input(new_mode,0,1,len(status),1)==0:
 				if int(new_mode) == 0:
 					print '\nListen canceled\n'
 					wait()
 					return 1
-				current_state_router=status[int(new_mode)]
+				current_status_router=status[int(new_mode)]
 		users_show()
-		logging.info("Listen start");
-		if os.name == 'nt':
-			print "Listening...(press esc to stop...)"
-		else:
-			print "Listening...(press ESC and then ENTER to stop...)"
+		logging.info("Listen start")
+		
 		if config_data['listening_mode']=="changes":
-			lockifi_listen_mode_changes(current_state_router)
+			rt = RepeatedTimer(1, lockifi_listen_mode_changes)
 		elif config_data['listening_mode']=="all_open":
-			lockifi_listen_mode_all_open(current_state_router)
+			rt = RepeatedTimer(1, lockifi_listen_mode_all_open)
 		else:
 			print "\nProblem with the listening_mode on Lockifi configuration\n"
 			wait()
 			return 1
+			
+		try:
+			esc = True;
+			while esc:
+				text = raw_input("Listening...(Introduce 'quit' to stop): ")
+				if text == "quit":
+					esc = False
+		finally:
+			rt.stop()
+			current_status_router=""
+			
+		
 		logging.info("Listen finish");
 		print '\nListen finish!\n'
 		wait()
@@ -705,52 +736,54 @@ def lockifi_listen_start():
 		print "\n-->There aren't users or routers registred on the system\n"
 		wait()
 		return 0
-def lockifi_listen_mode_changes(current_state_router):
-	listening=True
+def lockifi_listen_mode_changes():
 	record_str=""
-	while listening:
-		if len(record_str)>2000:
-			record_str=""
-		for user in users:
-			current_status_here = user['status']
-			current_status_latch = latch_status(user['accountId'])
-			
-			if current_status_latch!=current_status_here:
-				user['status']=current_status_latch
-				if current_status_latch!=current_state_router:
-					users_show()
-					print record_str
-					if current_status_latch=="on":
-						logging.info(user['name']+"Change wifi status to on");
-						record_str = record_str + lockifi_enable_router()
-						current_state_router = "on"
-					else:
-						logging.info(user['name']+ " change wifi status to off");
-						record_str = record_str + lockifi_unable_router()
-						current_state_router = "off"
-		time.sleep(1)
-		if detect_esc_press(): 
-			listening=False
+	global current_status_router
+	
+	if len(record_str)>2000:
+		record_str=""
+	for user in users:
+		current_status_here = user['status']
+		current_status_latch = latch_status(user['accountId'])
+		
+		if current_status_latch!=current_status_here:
+			user['status']=current_status_latch
+			if current_status_latch!=current_status_router:
+				users_show()
+				print record_str
+				if current_status_latch=="on":
+					logging.info(user['name']+"Change wifi status to on");
+					record_str = record_str + lockifi_enable_router()
+					current_status_router = "on"
+					print "Listening...(Enter 'quit' to stop): "
+				else:
+					logging.info(user['name']+ " change wifi status to off");
+					record_str = record_str + lockifi_disable_router()
+					current_status_router = "off"
+					print "Listening...(Enter 'quit' to stop): "
 	return 0	
-def lockifi_listen_mode_all_open(current_state_router):
-	listening=True
-	detect_keypress()
-	while listening:
-		global_status = "on"
-		for user in users:
-			current_status_latch = latch_status(user['accountId'])
-			if current_status_latch=="off":global_status = "off"
-		if global_status!=current_state_router:
-			if global_status=="on":
-				lockifi_enable_router()
-				current_state_router = "on"
-			else:
-				lockifi_unable_router()
-				current_state_router = "off"
-		time.sleep(1)
-		if detect_esc_press(): 
-			listening=False
-	return 0
+def lockifi_listen_mode_all_open():
+	record_str=""
+	global_status = "on"
+	global current_status_router
+	
+	for user in users:
+		current_status_latch = latch_status(user['accountId'])
+		if current_status_latch=="off":global_status = "off"
+		
+	if global_status!=current_status_router:
+		users_show()
+		print record_str
+		if global_status=="on":
+			current_status_router = "on"
+			record_str = record_str + lockifi_enable_router()
+
+			print "Listening...(Enter 'quit' to stop): "
+		else:
+			current_status_router = "off"
+			record_str = record_str + lockifi_disable_router()
+			print "Listening...(Enter 'quit' to stop): "
+
 def lockifi_enable_router():
 	toret = ""
 	time_start = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -766,20 +799,20 @@ def lockifi_enable_router():
 	print "\tWifi enabled\n"
 	toret = toret +  "\tWifi enabled\n"
 	return str(toret)
-def lockifi_unable_router():
+def lockifi_disable_router():
 	toret=""
 	time_start = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-	print "["+ str(time_start) +"] -> Unabling wifi (impossible stop process)\n"
-	toret = toret + "["+ str(time_start) +"] -> Unabling wifi (impossible stop process)\n"
-	os.system("python " + path_scripts+ config_data['default_router']['file'] +" 1")	#change 0
+	print "["+ str(time_start) +"] -> Disabling wifi (impossible stop process)\n"
+	toret = toret + "["+ str(time_start) +"] -> Disabling wifi (impossible stop process)\n"
+	os.system("python " + path_scripts+ config_data['default_router']['file'] +" 0")
 	count = 0
 	max_count = 20
 	while count < max_count:
 		users_refresh_status()
 		time.sleep(1)
 		count=count+1
-	print "\tWifi Unabled\n"
-	toret = toret + "\tWifi Unabled\n"
+	print "\tWifi Disabled\n"
+	toret = toret + "\tWifi Disabled\n"
 	return toret
 #Log functions
 def log_show():
@@ -795,11 +828,12 @@ def log_show():
 		log.close()
 		return 0
 
-
-if pre_main()!=0:
-	logging.critical("Critical failure in the initial program load. Program is forced to stop")
-	print "\n-->An error has been occurred and the program can't initialize\n"
-	wait()
-	exit(1)
-else:
-	main()
+if __name__ == "__main__":
+	if pre_main()!=0:
+		logging.critical("Critical failure in the initial program load. Program is forced to stop")
+		print "\n-->An error has been occurred and the program can't initialize\n"
+		wait()
+		exit(1)
+	else:
+		main()
+	
