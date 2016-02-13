@@ -73,6 +73,7 @@ def pre_main():
 	global routers
 	global log_file
 	global conf_file
+	global config_data
 	
 	logging.basicConfig(format='%(asctime)s %(message)s',filename=log_file,level=logging.DEBUG)
 	config_data = lockifi_modules.configuration_module.import_configuration(conf_file)
