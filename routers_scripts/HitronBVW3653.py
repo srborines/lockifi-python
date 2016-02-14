@@ -7,13 +7,6 @@ host="192.168.1.1"
 user = "admin"
 password = "36631310"
 estado = sys.argv[1]
-
-if estado=="true" or estado=="True" or estado=="1":
-	estado_label="true"
-	estado_int="1"
-elif estado=="false" or estado=="False" or estado=="0":
-	estado_label="false"
-	estado_int="0"
 	
 tn = telnetlib.Telnet(host)
 tn.read_until("Username:")

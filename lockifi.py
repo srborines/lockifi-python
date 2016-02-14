@@ -656,7 +656,8 @@ def lockifi_conf_edit():
 #Listen functions	
 def lockifi_listen_start():
 	global current_status_router
-
+	global record_str
+	
 	if len(users)>0 and len(routers)>0:
 		listening=1
 		print "Lockifi beta - Plugin Latch \n"
@@ -685,6 +686,7 @@ def lockifi_listen_start():
 		print "Listening...(Press enter to stop): "
 		list = []
 		thread.start_new_thread(input_thread, (list,))
+		record_str = ""
 		while not list:
 			if config_data['listening_mode']=="changes":
 				lockifi_listen_mode_changes()
@@ -708,9 +710,8 @@ def input_thread(list):
     raw_input()
     list.append(None)
 def lockifi_listen_mode_changes():
-	record_str=""
+	global record_str
 	global current_status_router
-	global rt
 	if len(record_str)>2000:
 		record_str=""
 		
@@ -737,14 +738,12 @@ def lockifi_listen_mode_changes():
 				print "Listening...(Press enter to stop): "
 	return 0	
 def lockifi_listen_mode_all_open():
-	record_str=""
-	global_status = "on"
+	global record_str
 	global current_status_router
-	global rt
+	
 	if len(record_str)>2000:
 		record_str=""
-	
-	
+	global_status = "on"
 	for user in users:
 		current_status_latch = latch_status(user['accountId'])
 		if current_status_latch=="off":global_status = "off"
