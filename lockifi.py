@@ -2,31 +2,29 @@
 conf_file = ""
 log_file = ""
 config_data={'appid':"",'seckey':"",'users_file':"",'routers_file':'','default_router':{'name':"",'file':""},'listening_mode':""}
-users =  "caca"
+users =  []
 routers = []
 current_status_router = ""
+rt = None
 
 #Imports
-try:
-	import logging
-	import latch
-	import os
-	import datetime
-	import time
-	import select
-	import sys
-	import os
 
-	from time import sleep
-	from texttable import Texttable
-	from threading import Timer
+import logging
+import latch
+import os
+import datetime
+import time
+import select
+import sys
+import os
 
-	import lockifi_modules.users_csv
-	import lockifi_modules.routers_csv
-	import lockifi_modules.configuration_module
-	
-except ImportError:
-	print "Import error"
+from time import sleep
+from texttable import Texttable
+from threading import Timer
+
+import lockifi_modules.users_csv
+import lockifi_modules.routers_csv
+import lockifi_modules.configuration_module
 
 class RepeatedTimer(object):
 	def __init__(self, interval, function, *args, **kwargs):
@@ -683,6 +681,7 @@ def lockifi_conf_edit():
 #Listen functions	
 def lockifi_listen_start():
 	global current_status_router
+	global rt
 
 	if len(users)>0 and len(routers)>0:
 		listening=1
@@ -767,23 +766,25 @@ def lockifi_listen_mode_all_open():
 	record_str=""
 	global_status = "on"
 	global current_status_router
+	global rt
 	
 	for user in users:
 		current_status_latch = latch_status(user['accountId'])
 		if current_status_latch=="off":global_status = "off"
 		
 	if global_status!=current_status_router:
+		current_status_router = global_status
+		rt.stop()
 		users_show()
+		print "Wifi: "+current_status_router
 		print record_str
 		if global_status=="on":
-			current_status_router = "on"
 			record_str = record_str + lockifi_enable_router()
-
-			print "Listening...(Enter 'quit' to stop): "
 		else:
-			current_status_router = "off"
 			record_str = record_str + lockifi_disable_router()
-			print "Listening...(Enter 'quit' to stop): "
+		
+		rt.start()
+		print "Listening...(Enter 'quit' to stop): "
 
 def lockifi_enable_router():
 	toret = ""
@@ -829,12 +830,12 @@ def log_show():
 		log.close()
 		return 0
 
-if __name__ == "__main__":
-	if pre_main()!=0:
-		logging.critical("Critical failure in the initial program load. Program is forced to stop")
-		print "\n-->An error has been occurred and the program can't initialize\n"
-		wait()
-		exit(1)
-	else:
-		main()
+
+if pre_main()!=0:
+	logging.critical("Critical failure in the initial program load. Program is forced to stop")
+	print "\n-->An error has been occurred and the program can't initialize\n"
+	wait()
+	exit(1)
+else:
+	main()
 	
