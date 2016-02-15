@@ -7,24 +7,51 @@ routers = []
 current_status_router = ""
 
 #Imports
+try:
+	import logging
+	import latch
+	import os
+	import datetime
+	import time
+	import select
+	import sys
+	import os
 
-import thread
-import logging
-import latch
-import os
-import datetime
-import time
-import select
-import sys
-import os
+	from time import sleep
+	from texttable import Texttable
+	from threading import Timer
 
-from time import sleep
-from texttable import Texttable
-from threading import Timer
+	import lockifi_modules.users_csv
+	import lockifi_modules.routers_csv
+	import lockifi_modules.configuration_module
+	
+except ImportError:
+	print "Import error"
 
-import lockifi_modules.users_csv
-import lockifi_modules.routers_csv
-import lockifi_modules.configuration_module
+class RepeatedTimer(object):
+	def __init__(self, interval, function, *args, **kwargs):
+		self._timer     = None
+		self.interval   = interval
+		self.function   = function
+		self.args       = args
+		self.kwargs     = kwargs
+		self.is_running = False
+		self.start()
+
+	def _run(self):
+		self.is_running = False
+		self.start()
+		self.function(*self.args, **self.kwargs)
+
+	def start(self):
+		if not self.is_running:
+			self._timer = Timer(self.interval, self._run)
+			self._timer.start()
+			self.is_running = True
+
+	def stop(self):
+		self._timer.cancel()
+		self.is_running = False
 
 #Operative system imports
 if os.name == 'nt':	# Windows
@@ -656,8 +683,7 @@ def lockifi_conf_edit():
 #Listen functions	
 def lockifi_listen_start():
 	global current_status_router
-	global record_str
-	
+
 	if len(users)>0 and len(routers)>0:
 		listening=1
 		print "Lockifi beta - Plugin Latch \n"
@@ -682,22 +708,27 @@ def lockifi_listen_start():
 				current_status_router=status[int(new_mode)]
 		users_show()
 		logging.info("Listen start")
-		print "Wifi: "+current_status_router
-		print "Listening...(Press enter to stop): "
-		list = []
-		thread.start_new_thread(input_thread, (list,))
-		record_str = ""
-		while not list:
-			if config_data['listening_mode']=="changes":
-				lockifi_listen_mode_changes()
-			elif config_data['listening_mode']=="all_open":
-				lockifi_listen_mode_all_open()
-			else:
-				print "\nProblem with the listening_mode on Lockifi configuration\n"
-				wait()
-				return 1
+		
+		if config_data['listening_mode']=="changes":
+			rt = RepeatedTimer(1, lockifi_listen_mode_changes)
+		elif config_data['listening_mode']=="all_open":
+			rt = RepeatedTimer(1, lockifi_listen_mode_all_open)
+		else:
+			print "\nProblem with the listening_mode on Lockifi configuration\n"
+			wait()
+			return 1
 			
-		current_status_router=""
+		try:
+			esc = True;
+			while esc:
+				text = raw_input("Listening...(Introduce 'quit' to stop): ")
+				if text == "quit":
+					esc = False
+		finally:
+			rt.stop()
+			current_status_router=""
+			
+		
 		logging.info("Listen finish");
 		print '\nListen finish!\n'
 		wait()
@@ -706,15 +737,12 @@ def lockifi_listen_start():
 		print "\n-->There aren't users or routers registred on the system\n"
 		wait()
 		return 0
-def input_thread(list):
-    raw_input()
-    list.append(None)
 def lockifi_listen_mode_changes():
-	global record_str
+	record_str=""
 	global current_status_router
+	
 	if len(record_str)>2000:
 		record_str=""
-		
 	for user in users:
 		current_status_here = user['status']
 		current_status_latch = latch_status(user['accountId'])
@@ -722,43 +750,40 @@ def lockifi_listen_mode_changes():
 		if current_status_latch!=current_status_here:
 			user['status']=current_status_latch
 			if current_status_latch!=current_status_router:
-				current_status_router = current_status_latch
 				users_show()
 				print record_str
-				
 				if current_status_latch=="on":
 					logging.info(user['name']+"Change wifi status to on");
 					record_str = record_str + lockifi_enable_router()
-
+					current_status_router = "on"
+					print "Listening...(Enter 'quit' to stop): "
 				else:
 					logging.info(user['name']+ " change wifi status to off");
 					record_str = record_str + lockifi_disable_router()
-
-				print "Wifi: "+current_status_router
-				print "Listening...(Press enter to stop): "
+					current_status_router = "off"
+					print "Listening...(Enter 'quit' to stop): "
 	return 0	
 def lockifi_listen_mode_all_open():
-	global record_str
+	record_str=""
+	global_status = "on"
 	global current_status_router
 	
-	if len(record_str)>2000:
-		record_str=""
-	global_status = "on"
 	for user in users:
 		current_status_latch = latch_status(user['accountId'])
 		if current_status_latch=="off":global_status = "off"
 		
 	if global_status!=current_status_router:
-		current_status_router = global_status
 		users_show()
 		print record_str
 		if global_status=="on":
+			current_status_router = "on"
 			record_str = record_str + lockifi_enable_router()
+
+			print "Listening...(Enter 'quit' to stop): "
 		else:
+			current_status_router = "off"
 			record_str = record_str + lockifi_disable_router()
-		
-		print "Wifi: "+current_status_router
-		print "Listening...(Press enter to stop): "
+			print "Listening...(Enter 'quit' to stop): "
 
 def lockifi_enable_router():
 	toret = ""
@@ -766,7 +791,12 @@ def lockifi_enable_router():
 	print "["+ str(time_start) +"] -> Enabling wifi (impossible stop process)\n"
 	toret = toret + "["+ str(time_start) +"] -> Enabling wifi (impossible stop process)\n"
 	os.system("python " + path_scripts + config_data['default_router']['file'] +" 1")
-	time.sleep(10)
+	count = 0
+	max_count = 20
+	while count < max_count:
+		users_refresh_status()
+		time.sleep(1)
+		count=count+1
 	print "\tWifi enabled\n"
 	toret = toret +  "\tWifi enabled\n"
 	return str(toret)
@@ -776,7 +806,12 @@ def lockifi_disable_router():
 	print "["+ str(time_start) +"] -> Disabling wifi (impossible stop process)\n"
 	toret = toret + "["+ str(time_start) +"] -> Disabling wifi (impossible stop process)\n"
 	os.system("python " + path_scripts+ config_data['default_router']['file'] +" 0")
-	time.sleep(10)
+	count = 0
+	max_count = 20
+	while count < max_count:
+		users_refresh_status()
+		time.sleep(1)
+		count=count+1
 	print "\tWifi Disabled\n"
 	toret = toret + "\tWifi Disabled\n"
 	return toret
@@ -794,12 +829,12 @@ def log_show():
 		log.close()
 		return 0
 
-
-if pre_main()!=0:
-	logging.critical("Critical failure in the initial program load. Program is forced to stop")
-	print "\n-->An error has been occurred and the program can't initialize\n"
-	wait()
-	exit(1)
-else:
-	main()
+if __name__ == "__main__":
+	if pre_main()!=0:
+		logging.critical("Critical failure in the initial program load. Program is forced to stop")
+		print "\n-->An error has been occurred and the program can't initialize\n"
+		wait()
+		exit(1)
+	else:
+		main()
 	
